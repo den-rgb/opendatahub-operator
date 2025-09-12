@@ -91,6 +91,7 @@ const (
 	ConditionThanosQuerierAvailable          = "ThanosQuerierAvailable"
 	ConditionPersesAvailable                 = "PersesAvailable"
 	ConditionPersesTempoDataSourceAvailable  = "PersesTempoDataSourceAvailable"
+	ConditionNodeMetricsEndpointAvailable        = "NodeMetricsEndpointAvailable"
 )
 
 const (

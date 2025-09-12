@@ -149,6 +149,7 @@ func (h *serviceHandler) NewReconciler(ctx context.Context, mgr ctrl.Manager) er
 		WithAction(deployOpenTelemetryCollector).
 		WithAction(deployPerses).
 		WithAction(deployPersesDatasource).
+		WithAction(deployNodeMetricsEndpoint).
 		WithAction(template.NewAction(
 			template.WithDataFn(getTemplateData),
 		)).

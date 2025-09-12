@@ -48,6 +48,7 @@ const (
 	// Resource names.
 	PersesTempoDatasourceName = "tempo-datasource"
 	PersesTempoDashboardName  = "data-science-tempo-traces"
+	NodeMetricsEndpointTemplate               = "resources/node-metrics-endpoint.tmpl.yaml"
 )
 
 // CRDRequirement defines a required CRD and its associated condition for monitoring components.
@@ -554,6 +555,35 @@ func deployPersesDatasource(ctx context.Context, rr *odhtypes.ReconciliationRequ
 			FS:   resourcesFS,
 			Path: PersesTempoDashboardTemplate,
 		})
+	}
+
+	rr.Templates = append(rr.Templates, templates...)
+
+	return nil
+}
+
+func deployNodeMetricsEndpoint(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
+	monitoring, ok := rr.Instance.(*serviceApi.Monitoring)
+	if !ok {
+		return errors.New("instance is not of type *services.Monitoring")
+	}
+
+	if monitoring.Spec.Metrics == nil {
+		rr.Conditions.MarkFalse(
+			status.ConditionNodeMetricsEndpointAvailable,
+			conditions.WithReason(status.MetricsNotConfiguredReason),
+			conditions.WithMessage(status.MetricsNotConfiguredMessage),
+		)
+		return nil
+	}
+
+	rr.Conditions.MarkTrue(status.ConditionNodeMetricsEndpointAvailable)
+
+	templates := []odhtypes.TemplateInfo{
+		{
+			FS:   resourcesFS,
+			Path: NodeMetricsEndpointTemplate,
+		},
 	}
 
 	rr.Templates = append(rr.Templates, templates...)
