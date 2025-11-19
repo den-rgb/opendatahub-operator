@@ -2,52 +2,50 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: node-metrics-endpoint
+  name: data-science-node-metrics-endpoint
   namespace: {{.Namespace}}
   labels:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
     platform.opendatahub.io/part-of: monitoring
-  ownerReferences:
-  - apiVersion: {{.Component.APIVersion}}
-    kind: {{.Component.Kind}}
-    name: {{.Component.Name}}
-    uid: {{.Component.UID}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: node-metrics-endpoint-auth-delegator
+  name: data-science-node-metrics-endpoint
   labels:
     platform.opendatahub.io/part-of: monitoring
-  {{- if .DSCI }}
-  ownerReferences:
-  - apiVersion: {{.DSCI.APIVersion}}
-    kind: {{.DSCI.Kind}}
-    name: {{.DSCI.Name}}
-    uid: {{.DSCI.UID}}
-  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: data-science-node-metrics-endpoint
+    namespace: {{.Namespace}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: data-science-node-metrics-endpoint-auth-delegator
+  labels:
+    platform.opendatahub.io/part-of: monitoring
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
-    name: node-metrics-endpoint
+    name: data-science-node-metrics-endpoint
     namespace: {{.Namespace}}
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: node-metrics-endpoint-kube-rbac-proxy
+  name: data-science-node-metrics-endpoint-kube-rbac-proxy
   namespace: {{.Namespace}}
   labels:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
     platform.opendatahub.io/part-of: monitoring
-  ownerReferences:
-  - apiVersion: {{.Component.APIVersion}}
-    kind: {{.Component.Kind}}
-    name: {{.Component.Name}}
-    uid: {{.Component.UID}}
 type: Opaque
 data: {}
 stringData:
@@ -61,37 +59,35 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: node-metrics-endpoint
+  name: data-science-node-metrics-endpoint
   namespace: {{.Namespace}}
   labels:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
     platform.opendatahub.io/part-of: monitoring
-  ownerReferences:
-  - apiVersion: {{.Component.APIVersion}}
-    kind: {{.Component.Kind}}
-    name: {{.Component.Name}}
-    uid: {{.Component.UID}}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: node-metrics-endpoint
+      app: data-science-node-metrics-endpoint
   template:
     metadata:
       labels:
-        app: node-metrics-endpoint
+        app: data-science-node-metrics-endpoint
     spec:
-      serviceAccountName: node-metrics-endpoint
+      serviceAccountName: data-science-node-metrics-endpoint
       containers:
         # kube-rbac-proxy for authentication and authorization based on NodeMetrics access
         - name: kube-rbac-proxy
-          image: gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0
+          image: {{.KubeRBACProxyImage}}
           args:
             - --secure-listen-address=0.0.0.0:8443
-            - --upstream=http://data-science-monitoringstack-prometheus.{{.Namespace}}.svc:9090
+            - --upstream=https://prometheus-operated.{{.Namespace}}.svc:9090
             - --config-file=/etc/kube-rbac-proxy/config.yaml
             - --tls-cert-file=/etc/tls/private/tls.crt
             - --tls-private-key-file=/etc/tls/private/tls.key
+            - --upstream-ca-file=/etc/prometheus-ca/service-ca.crt
+            - --upstream-client-cert-file=/etc/prometheus-client/tls.crt
+            - --upstream-client-key-file=/etc/prometheus-client/tls.key
             - --logtostderr=true
             - --v=1
             # Allow only metrics endpoint
@@ -115,6 +111,12 @@ spec:
             - name: tls
               mountPath: /etc/tls/private
               readOnly: true
+            - name: prometheus-ca
+              mountPath: /etc/prometheus-ca
+              readOnly: true
+            - name: prometheus-client-cert
+              mountPath: /etc/prometheus-client
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -137,13 +139,18 @@ spec:
       volumes:
         - name: kube-rbac-proxy-config
           secret:
-            secretName: node-metrics-endpoint-kube-rbac-proxy
+            secretName: data-science-node-metrics-endpoint-kube-rbac-proxy
         - name: tls
           secret:
-            secretName: node-metrics-endpoint-tls
+            secretName: data-science-node-metrics-endpoint-tls
+        - name: prometheus-ca
+          configMap:
+            name: prometheus-web-tls-ca
+        - name: prometheus-client-cert
+          secret:
+            secretName: prometheus-operated-tls
       nodeSelector:
         kubernetes.io/os: linux
-      priorityClassName: system-cluster-critical
       securityContext:
         runAsNonRoot: true
       tolerations:
@@ -157,18 +164,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: node-metrics-endpoint
+  name: data-science-node-metrics-endpoint
   namespace: {{.Namespace}}
   labels:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
     platform.opendatahub.io/part-of: monitoring
-  ownerReferences:
-  - apiVersion: {{.Component.APIVersion}}
-    kind: {{.Component.Kind}}
-    name: {{.Component.Name}}
-    uid: {{.Component.UID}}
   annotations:
-    service.beta.openshift.io/serving-cert-secret-name: node-metrics-endpoint-tls
+    service.beta.openshift.io/serving-cert-secret-name: data-science-node-metrics-endpoint-tls
 spec:
   type: ClusterIP
   ports:
@@ -177,25 +179,20 @@ spec:
       protocol: TCP
       targetPort: https
   selector:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
 ---
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: node-metrics-endpoint
+  name: data-science-node-metrics-endpoint
   namespace: {{.Namespace}}
   labels:
-    app: node-metrics-endpoint
+    app: data-science-node-metrics-endpoint
     platform.opendatahub.io/part-of: monitoring
-  ownerReferences:
-  - apiVersion: {{.Component.APIVersion}}
-    kind: {{.Component.Kind}}
-    name: {{.Component.Name}}
-    uid: {{.Component.UID}}
 spec:
   to:
     kind: Service
-    name: node-metrics-endpoint
+    name: data-science-node-metrics-endpoint
     weight: 100
   port:
     targetPort: https

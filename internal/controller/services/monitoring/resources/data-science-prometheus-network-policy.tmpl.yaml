@@ -18,6 +18,9 @@ spec:
         - podSelector:
             matchLabels:
               app: data-science-prometheus-restricted
+        - podSelector:
+            matchLabels:
+              app: data-science-node-metrics-endpoint
       ports:
         - protocol: TCP
           port: 9090
