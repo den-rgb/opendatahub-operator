@@ -89,9 +89,32 @@ validate_tag E2E_TEST_TAG
 : "${USE_TEST_RETRY:=false}"
 validate_bool USE_TEST_RETRY
 
+# Path to quarantine config JSON (tests listed there are skipped)
+: "${QUARANTINE_CONFIG:=}"
+
 # Choose test runner based on USE_TEST_RETRY flag
 if [ "$USE_TEST_RETRY" = "true" ] || [ "$USE_TEST_RETRY" = "1" ]; then
   echo "Using test-retry for JUnit enrichment with failure classification"
+
+  # Build extra flags array for optional arguments
+  EXTRA_ARGS=()
+  if [ -n "${QUARANTINE_CONFIG:-}" ]; then
+    if [ -f "${QUARANTINE_CONFIG}" ]; then
+      EXTRA_ARGS+=("--quarantine-config=${QUARANTINE_CONFIG}")
+    else
+      echo "Error: QUARANTINE_CONFIG '${QUARANTINE_CONFIG}' does not exist" >&2
+      exit 1
+    fi
+  fi
+
+  # Embed commit SHA into JUnit XML for regression tracking.
+  # PULL_PULL_SHA: Prow presubmit PR head; PULL_BASE_SHA: Prow postsubmit; GITHUB_SHA: GitHub Actions.
+  COMMIT_SHA="${PULL_PULL_SHA:-${PULL_BASE_SHA:-${GITHUB_SHA:-}}}"
+  if [[ "${COMMIT_SHA}" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+    EXTRA_ARGS+=("--commit-sha=${COMMIT_SHA}")
+  elif [ -n "${COMMIT_SHA}" ]; then
+    echo "Warning: COMMIT_SHA '${COMMIT_SHA}' is not a valid hex SHA; not embedding." >&2
+  fi
 
   # Run with test-retry (enriched JUnit XML with <properties>)
   # Note: No --filter flag (uses custom e2e flags like --tag, --test-operator-controller instead)
@@ -102,6 +125,7 @@ if [ "$USE_TEST_RETRY" = "true" ] || [ "$USE_TEST_RETRY" = "1" ]; then
     --max-retries 3 \
     --junit-output results/xunit_report.xml \
     --verbose \
+    "${EXTRA_ARGS[@]}" \
     -- --test.parallel=8 \
     --deletion-policy="$E2E_TEST_DELETION_POLICY" \
     --clean-up-previous-resources="$E2E_TEST_CLEAN_UP_PREVIOUS_RESOURCES" \
