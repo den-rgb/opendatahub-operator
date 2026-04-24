@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,6 +100,7 @@ type TestGroup struct {
 	name      string
 	enabled   bool
 	parallel  bool
+	timeout   time.Duration // per-group timeout budget; 0 means no limit
 	scenarios []map[string]TestFn
 	flags     arrayFlags
 }
@@ -136,6 +138,7 @@ var (
 		name:     "components",
 		enabled:  true,
 		parallel: true,
+		timeout:  35 * time.Minute,
 		scenarios: []map[string]TestFn{
 			{
 				componentApi.DashboardComponentName:            dashboardTestSuite,
@@ -179,6 +182,7 @@ var (
 		name:     "services",
 		enabled:  true,
 		parallel: true,
+		timeout:  25 * time.Minute,
 		scenarios: []map[string]TestFn{{
 			serviceApi.MonitoringServiceName: monitoringTestSuite,
 			serviceApi.AuthServiceName:       authControllerTestSuite,
@@ -262,6 +266,35 @@ func (tg *TestGroup) resolveEnabledTests() map[string]bool {
 	return enabledTests
 }
 
+// applyTimeout installs a timeout watchdog on t if tg.timeout > 0.
+// The watchdog records a failure via t.Errorf when the budget is exceeded.
+func (tg *TestGroup) applyTimeout(t *testing.T) {
+	t.Helper()
+
+	if tg.timeout <= 0 {
+		return
+	}
+
+	var (
+		mu       sync.Mutex
+		finished bool
+	)
+	timer := time.AfterFunc(tg.timeout, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if finished {
+			return
+		}
+		t.Errorf("Test group %s exceeded its %s timeout budget", tg.name, tg.timeout)
+	})
+	t.Cleanup(func() {
+		timer.Stop()
+		mu.Lock()
+		finished = true
+		mu.Unlock()
+	})
+}
+
 func (tg *TestGroup) Run(t *testing.T) {
 	t.Helper()
 
@@ -269,6 +302,8 @@ func (tg *TestGroup) Run(t *testing.T) {
 		t.Skipf("Test group %s is disabled", tg.name)
 		return
 	}
+
+	tg.applyTimeout(t)
 
 	enabledTests := tg.resolveEnabledTests()
 
@@ -310,6 +345,8 @@ func (tg *TestGroup) RunSingle(name string) func(t *testing.T) {
 			return
 		}
 
+		tg.applyTimeout(t)
+
 		for _, group := range tg.scenarios {
 			if testFunc, ok := group[name]; ok {
 				testFunc(t)
@@ -337,6 +374,8 @@ func (tg *TestGroup) RunExcluding(excludeName string) func(t *testing.T) {
 			t.Skipf("Test group %s is disabled", tg.name)
 			return
 		}
+
+		tg.applyTimeout(t)
 
 		enabledTests := tg.resolveEnabledTests()
 		delete(enabledTests, excludeName)
